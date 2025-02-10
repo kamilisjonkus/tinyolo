@@ -3,6 +3,8 @@ import os
 import shutil
 from typing import List
 
+from tinygrad.helpers import tqdm
+
 
 def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, classes: List[str]):
   os.makedirs(os.path.join(dataset_dir, "annotations"), exist_ok=True)
@@ -10,6 +12,7 @@ def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, 
   os.makedirs(os.path.join(dataset_dir, "val"), exist_ok=True)
 
   for dataset in ["train", "val"]:
+    print(f"Processing phase: {dataset}")
     with open(os.path.join(annotations_dir, f"instances_{dataset}2017.json"), "r") as f: coco_data = json.load(f)
     category_ids = [cat["id"] for cat in coco_data["categories"] if cat["name"] in classes]
     if not category_ids: raise ValueError(f"No valid classes found in {dataset} dataset")
@@ -17,7 +20,8 @@ def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, 
     filtered_images = [img for img in coco_data["images"] if img["id"] in image_ids]
     src_dir = os.path.join(images_dir, f"{dataset}2017")
     dst_dir = os.path.join(dataset_dir, f"{dataset}")
-    for img in filtered_images: shutil.copy(os.path.join(src_dir, img["file_name"]), os.path.join(dst_dir, img["file_name"]))
+    for img in tqdm(filtered_images, desc="Copying images"): 
+      shutil.copy(os.path.join(src_dir, img["file_name"]), os.path.join(dst_dir, img["file_name"]))
     filtered_data = {
       "info": coco_data["info"],
       "licenses": coco_data.get("licenses", []),
