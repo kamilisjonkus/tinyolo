@@ -1,9 +1,10 @@
-import os
 import json
+import os
 import shutil
+from typing import List
 
-def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, classes_str: str):
-  classes = [_cls for _cls in classes_str.split(";") if _cls != ""]
+
+def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, classes: List[str]):
   os.makedirs(os.path.join(dataset_dir, "annotations"), exist_ok=True)
   os.makedirs(os.path.join(dataset_dir, "train"), exist_ok=True)
   os.makedirs(os.path.join(dataset_dir, "val"), exist_ok=True)
@@ -29,4 +30,4 @@ def parse_coco_classes(images_dir: str, annotations_dir: str, dataset_dir: str, 
 if __name__ == "__main__":
   parse_coco_classes(images_dir="/home/username/datasets/", 
                      annotations_dir="/home/username/datasets/annotations_trainval2017",
-                     dataset_dir="/home/username/datasets/cat_dog", classes_str="cat;dog")
+                     dataset_dir="/home/username/datasets/cat_dog", classes=["cat", "dog"])
