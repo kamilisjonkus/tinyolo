@@ -115,10 +115,6 @@ class RepBiFPANNeck:
 
         return (pan_out2, pan_out1, pan_out0)
 
-# https://github.com/meituan/YOLOv6/blob/main/configs/qarepvgg/yolov6s_qa.py
-def make_divisible(x, divisor):
-    return math.ceil(x / divisor) * divisor
-
 class YOLOv6s:
   def __init__(self, w, d, num_classes): #width_multiple, depth_multiple
     num_repeat_backbone = [1, 6, 12, 18, 6]
@@ -126,7 +122,7 @@ class YOLOv6s:
     num_repeat = [(max(round(i * d), 1) if i > 1 else i) for i in (num_repeat_backbone + num_repeat_neck)]
     channels_list_backbone = [64, 128, 256, 512, 1024]
     channels_list_neck = [256, 128, 128, 256, 256, 512]
-    channels_list = [make_divisible(i * w, 8) for i in (channels_list_backbone + channels_list_neck)]
+    channels_list = [math.ceil(i * w / 8) * 8 for i in (channels_list_backbone + channels_list_neck)]
     self.backbone = EfficientRep(in_channels=3, channels_list=channels_list, num_repeats=num_repeat)
     self.neck = RepBiFPANNeck(channels_list=channels_list, num_repeats=num_repeat)
 
