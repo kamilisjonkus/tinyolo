@@ -1,8 +1,15 @@
 import math
-from tinyolo.blocks import SimCSPSPPF, ConvBNReLU, BiFusion
 from tinygrad import Tensor, nn
 from typing import Tuple, List, Callable
 
+
+class ConvBNReLU:
+  def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, groups=1, bias=False):
+    self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias, groups=groups)
+    self.bn = nn.BatchNorm2d(out_channels)
+
+  def __call__(self, x: Tensor) -> Tensor:
+    return self.bn(self.conv(x)).relu()
 
 class QARepVGGBlock:
     """
@@ -21,131 +28,92 @@ class QARepVGGBlock:
 
 def repeat_block(in_chnls, out_chnls, n) -> List[Callable[[Tensor], Tensor]]:
     return [QARepVGGBlock(in_chnls, out_chnls)] + [QARepVGGBlock(out_chnls, out_chnls) for _ in range(n - 1)] if n > 1 else []
+  
+class CSPSPPFModule:
+    # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, in_channels, out_channels):
+        c_ = int(out_channels * 0.5)  # hidden channels
+        self.cv1 = ConvBNReLU(in_channels, c_, 1, 1)
+        self.cv2 = ConvBNReLU(in_channels, c_, 1, 1)
+        self.cv3 = ConvBNReLU(c_, c_, 3, 1)
+        self.cv4 = ConvBNReLU(c_, c_, 1, 1)
+        self.cv5 = ConvBNReLU(4 * c_, c_, 1, 1)
+        self.cv6 = ConvBNReLU(c_, c_, 3, 1)
+        self.cv7 = ConvBNReLU(2 * c_, out_channels, 1, 1)
 
-class EfficientRep():
+    def __call__(self, x: Tensor) -> Tensor:
+        x1 = self.cv4(self.cv3(self.cv1(x)))
+        y0 = self.cv2(x)
+        y1 = x1.max_pool2d(5, 1, padding=2)
+        y2 = y1.max_pool2d(5, 1, padding=2)
+        y3 = self.cv6(self.cv5(Tensor.cat([x1, y1, y2, y2.max_pool2d(5, 1, padding=2)], 1)))
+        return self.cv7(Tensor.cat((y0, y3), dim=1))
+
+class BiFusion:
+    def __init__(self, in_channels, out_channels):
+        self.cv1 = ConvBNReLU(in_channels[0], out_channels, 1, 1)
+        self.cv2 = ConvBNReLU(in_channels[1], out_channels, 1, 1)
+        self.cv3 = ConvBNReLU(out_channels * 3, out_channels, 1, 1)
+        self.upsample = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)
+        self.downsample = ConvBNReLU(out_channels, out_channels, 3, 2)
+
+    def __call__(self, x: Tuple[Tensor]) -> Tensor:
+        x0 = self.upsample(x[0])
+        x1 = self.cv1(x[1])
+        x2 = self.downsample(self.cv2(x[2]))
+        return self.cv3(Tensor.cat((x0, x1, x2), dim=1))
+
+class EfficientRep:
     def __init__(self, channels_list, num_repeats):
         self.stem = [QARepVGGBlock(3, channels_list[0], stride=2)]
         self.ERBlock_2 = [QARepVGGBlock(channels_list[0], channels_list[1], 2)] + repeat_block(channels_list[1], channels_list[1], num_repeats[1])
         self.ERBlock_3 = [QARepVGGBlock(channels_list[1], channels_list[2], 2)] + repeat_block(channels_list[2], channels_list[2], num_repeats[2])
         self.ERBlock_4 = [QARepVGGBlock(channels_list[2], channels_list[3], 2)] + repeat_block(channels_list[3], channels_list[3], num_repeats[3])
         self.ERBlock_5 = [QARepVGGBlock(channels_list[3], channels_list[4], 2)] + repeat_block(channels_list[4], channels_list[4], num_repeats[4]) + \
-            + [SimCSPSPPF(channels_list[4], channels_list[4], kernel_size=5)]
+            + [CSPSPPFModule(channels_list[4], channels_list[4])]
 
-    def forward(self, x: Tensor) -> Tuple[Tensor]:
+    def __call__(self, x: Tensor) -> Tuple[Tensor]:
         x1 = x.sequential(self.stem)
         x2 = x1.sequential(self.ERBlock_2)
         x3 = x2.sequential(self.ERBlock_3)
         x4 = x3.sequential(self.ERBlock_4)
         x5 = x4.sequential(self.ERBlock_5)
         return (x2, x3, x4, x5)
-    
 
-class RepBiFPANNeck(nn.Module):
-    """RepBiFPANNeck Module
-    """
-    # [64, 128, 256, 512, 1024]
-    # [256, 128, 128, 256, 256, 512]
+class RepBiFPANNeck:
+    def __init__(self, channels_list, num_repeats):
+        self.reduce_layer0 = ConvBNReLU(channels_list[4], channels_list[5], 1, 1)
+        self.Bifusion0 = BiFusion([channels_list[3], channels_list[2]], channels_list[5])
+        self.Rep_p4 = repeat_block(channels_list[5], channels_list[5], num_repeats[5])
+        self.reduce_layer1 = ConvBNReLU(channels_list[5], channels_list[6], 1, 1)
+        self.Bifusion1 = BiFusion([channels_list[2], channels_list[1]], channels_list[6])
+        self.Rep_p3 = repeat_block(channels_list[6], channels_list[6], num_repeats[6])
+        self.downsample2 = ConvBNReLU(channels_list[6], channels_list[7], 3, 2)
+        self.Rep_n3 = repeat_block(channels_list[6] + channels_list[7], channels_list[8], num_repeats[7])
+        self.downsample1 = ConvBNReLU(channels_list[8], channels_list[9], 3, 2)
+        self.Rep_n4 = repeat_block(channels_list[5] + channels_list[9], channels_list[10], num_repeats[8])
 
-    def __init__(
-        self,
-        channels_list=None,
-        num_repeats=None,
-        block=QARepVGGBlock
-    ):
-        super().__init__()
+    def __call__(self, x: Tuple[Tensor]) -> Tuple[Tensor]:
 
-        assert channels_list is not None
-        assert num_repeats is not None
-
-        self.reduce_layer0 = ConvBNReLU(
-            in_channels=channels_list[4], # 1024
-            out_channels=channels_list[5], # 256
-            kernel_size=1,
-            stride=1
-        )
-
-        self.Bifusion0 = BiFusion(
-            in_channels=[channels_list[3], channels_list[2]], # 512, 256
-            out_channels=channels_list[5], # 256
-        )
-        self.Rep_p4 = RepBlock(
-            in_channels=channels_list[5], # 256
-            out_channels=channels_list[5], # 256
-            n=num_repeats[5],
-            block=block
-        )
-
-        self.reduce_layer1 = ConvBNReLU(
-            in_channels=channels_list[5], # 256
-            out_channels=channels_list[6], # 128
-            kernel_size=1,
-            stride=1
-        )
-
-        self.Bifusion1 = BiFusion(
-            in_channels=[channels_list[2], channels_list[1]], # 256, 128
-            out_channels=channels_list[6], # 128
-        )
-
-        self.Rep_p3 = RepBlock(
-            in_channels=channels_list[6], # 128
-            out_channels=channels_list[6], # 128
-            n=num_repeats[6],
-            block=block
-        )
-
-        self.downsample2 = ConvBNReLU(
-            in_channels=channels_list[6], # 128
-            out_channels=channels_list[7], # 128
-            kernel_size=3,
-            stride=2
-        )
-
-        self.Rep_n3 = RepBlock(
-            in_channels=channels_list[6] + channels_list[7], # 128 + 128
-            out_channels=channels_list[8], # 256
-            n=num_repeats[7],
-            block=block
-        )
-
-        self.downsample1 = ConvBNReLU(
-            in_channels=channels_list[8], # 256
-            out_channels=channels_list[9], # 256
-            kernel_size=3,
-            stride=2
-        )
-
-        self.Rep_n4 = RepBlock(
-            in_channels=channels_list[5] + channels_list[9], # 256 + 256
-            out_channels=channels_list[10], # 512
-            n=num_repeats[8],
-            block=block
-        )
-
-
-    def forward(self, input):
-
-        (x3, x2, x1, x0) = input
+        (x3, x2, x1, x0) = x
 
         fpn_out0 = self.reduce_layer0(x0)
         f_concat_layer0 = self.Bifusion0([fpn_out0, x1, x2])
-        f_out0 = self.Rep_p4(f_concat_layer0)
+        f_out0 = f_concat_layer0.sequential(self.Rep_p4)
 
         fpn_out1 = self.reduce_layer1(f_out0)
         f_concat_layer1 = self.Bifusion1([fpn_out1, x2, x3])
-        pan_out2 = self.Rep_p3(f_concat_layer1)
+        pan_out2 = f_concat_layer1.sequential(self.Rep_p3)
 
         down_feat1 = self.downsample2(pan_out2)
-        p_concat_layer1 = torch.cat([down_feat1, fpn_out1], 1)
-        pan_out1 = self.Rep_n3(p_concat_layer1)
+        p_concat_layer1 = Tensor.cat([down_feat1, fpn_out1], 1)
+        pan_out1 = p_concat_layer1.sequential(self.Rep_n3)
 
         down_feat0 = self.downsample1(pan_out1)
-        p_concat_layer2 = torch.cat([down_feat0, fpn_out0], 1)
-        pan_out0 = self.Rep_n4(p_concat_layer2)
+        p_concat_layer2 = Tensor.cat([down_feat0, fpn_out0], 1)
+        pan_out0 = p_concat_layer2.sequential(self.Rep_n4)
 
-        outputs = [pan_out2, pan_out1, pan_out0]
-
-        return outputs
+        return (pan_out2, pan_out1, pan_out0)
 
 # https://github.com/meituan/YOLOv6/blob/main/configs/qarepvgg/yolov6s_qa.py
 def make_divisible(x, divisor):
