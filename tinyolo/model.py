@@ -10,6 +10,14 @@ class ConvBNReLU:
 
   def __call__(self, x: Tensor) -> Tensor:
     return self.bn(self.conv(x)).relu()
+  
+class ConvBNSiLU:
+  def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, groups=1, bias=False):
+    self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias, groups=groups)
+    self.bn = nn.BatchNorm2d(out_channels)
+
+  def __call__(self, x: Tensor) -> Tensor:
+    return self.bn(self.conv(x)).silu()
 
 class QARepVGGBlock:
     """
@@ -114,6 +122,121 @@ class RepBiFPANNeck:
         pan_out0 = p_concat_layer2.sequential(self.Rep_n4)
 
         return (pan_out2, pan_out1, pan_out0)
+    
+
+class EffiDeHead:
+    '''Efficient Decoupled Head
+    '''
+    def __init__(self, num_classes, channels_list):  # detection layer
+        chx = [6, 8, 10]
+        head_layers = [
+          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 1, 1),
+          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 3, 1),
+          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 3, 1),
+          nn.Conv2d(channels_list[chx[0]], num_classes, 1),
+          nn.Conv2d(channels_list[chx[0]], 4, 1),
+          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 1, 1),
+          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 3, 1),
+          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 3, 1),
+          nn.Conv2d(channels_list[chx[1]], num_classes, 1),
+          nn.Conv2d(channels_list[chx[1]], 4, 1),
+          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 1, 1),
+          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 3, 1),
+          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 3, 1),
+          nn.Conv2d(channels_list[chx[2]], num_classes, 1),
+          nn.Conv2d(channels_list[chx[2]], 4, 1)
+        ]
+        self.nc = num_classes  # number of classes
+        self.no = num_classes + 5  # number of outputs per anchor
+        self.grid = [Tensor.zeros(1)] * 3
+        self.prior_prob = 1e-2
+        stride = [8, 16, 32]
+        self.stride = Tensor.tensor(stride)
+        self.proj_conv = nn.Conv2d(1, 1, 1, bias=False)
+        self.grid_cell_offset = 0.5
+        self.grid_cell_size = 5.0
+
+        # Init decouple head
+        self.stems = []
+        self.cls_convs = []
+        self.reg_convs = []
+        self.cls_preds = []
+        self.reg_preds = []
+        
+        # Efficient decoupled head layers
+        for i in range(3):
+            idx = i*5
+            self.stems.append(head_layers[idx])
+            self.cls_convs.append(head_layers[idx+1])
+            self.reg_convs.append(head_layers[idx+2])
+            self.cls_preds.append(head_layers[idx+3])
+            self.reg_preds.append(head_layers[idx+4])
+
+
+    def forward(self, x):
+        if self.training:
+            cls_score_list = []
+            reg_distri_list = []
+
+            for i in range(self.nl):
+                x[i] = self.stems[i](x[i])
+                cls_x = x[i]
+                reg_x = x[i]
+                cls_feat = self.cls_convs[i](cls_x)
+                cls_output = self.cls_preds[i](cls_feat)
+                reg_feat = self.reg_convs[i](reg_x)
+                reg_output = self.reg_preds[i](reg_feat)
+
+                cls_output = Tensor.sigmoid(cls_output)
+                cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
+                reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
+
+            cls_score_list = Tensor.cat(cls_score_list, axis=1)
+            reg_distri_list = Tensor.cat(reg_distri_list, axis=1)
+
+            return x, cls_score_list, reg_distri_list
+        else:
+            cls_score_list = []
+            reg_dist_list = []
+
+            for i in range(self.nl):
+                b, _, h, w = x[i].shape
+                l = h * w
+                x[i] = self.stems[i](x[i])
+                cls_x = x[i]
+                reg_x = x[i]
+                cls_feat = self.cls_convs[i](cls_x)
+                cls_output = self.cls_preds[i](cls_feat)
+                reg_feat = self.reg_convs[i](reg_x)
+                reg_output = self.reg_preds[i](reg_feat)
+                cls_output = Tensor.sigmoid(cls_output)
+
+                if self.export:
+                    cls_score_list.append(cls_output)
+                    reg_dist_list.append(reg_output)
+                else:
+                    cls_score_list.append(cls_output.reshape([b, self.nc, l]))
+                    reg_dist_list.append(reg_output.reshape([b, 4, l]))
+
+            if self.export:
+                return tuple(Tensor.cat([cls, reg], 1) for cls, reg in zip(cls_score_list, reg_dist_list))
+
+            cls_score_list = Tensor.cat(cls_score_list, axis=-1).permute(0, 2, 1)
+            reg_dist_list = Tensor.cat(reg_dist_list, axis=-1).permute(0, 2, 1)
+
+
+            anchor_points, stride_tensor = generate_anchors(
+                x, self.stride, self.grid_cell_size, self.grid_cell_offset, device=x[0].device, is_eval=True, mode='af')
+
+            pred_bboxes = dist2bbox(reg_dist_list, anchor_points, box_format='xywh')
+            pred_bboxes *= stride_tensor
+            return Tensor.cat(
+                [
+                    pred_bboxes,
+                    Tensor.ones((b, pred_bboxes.shape[1], 1), device=pred_bboxes.device, dtype=pred_bboxes.dtype),
+                    cls_score_list
+                ],
+                axis=-1)
 
 class YOLOv6s:
   def __init__(self, w, d, num_classes): #width_multiple, depth_multiple
@@ -125,6 +248,7 @@ class YOLOv6s:
     channels_list = [math.ceil(i * w / 8) * 8 for i in (channels_list_backbone + channels_list_neck)]
     self.backbone = EfficientRep(in_channels=3, channels_list=channels_list, num_repeats=num_repeat)
     self.neck = RepBiFPANNeck(channels_list=channels_list, num_repeats=num_repeat)
+    self.head = EffiDeHead(num_classes, channels_list)
 
   def __call__(self, x: Tensor) -> Tensor:
     x = self.backbone(x)
