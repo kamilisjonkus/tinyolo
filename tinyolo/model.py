@@ -162,7 +162,7 @@ class EffiDeHead:
         self.reg_convs = []
         self.cls_preds = []
         self.reg_preds = []
-        
+
         # Efficient decoupled head layers
         for i in range(3):
             idx = i*5
@@ -173,7 +173,7 @@ class EffiDeHead:
             self.reg_preds.append(head_layers[idx+4])
 
 
-    def forward(self, x):
+    def __call__(self, x):
         if self.training:
             cls_score_list = []
             reg_distri_list = []
@@ -210,24 +210,13 @@ class EffiDeHead:
                 reg_feat = self.reg_convs[i](reg_x)
                 reg_output = self.reg_preds[i](reg_feat)
                 cls_output = Tensor.sigmoid(cls_output)
-
-                if self.export:
-                    cls_score_list.append(cls_output)
-                    reg_dist_list.append(reg_output)
-                else:
-                    cls_score_list.append(cls_output.reshape([b, self.nc, l]))
-                    reg_dist_list.append(reg_output.reshape([b, 4, l]))
-
-            if self.export:
-                return tuple(Tensor.cat([cls, reg], 1) for cls, reg in zip(cls_score_list, reg_dist_list))
+                cls_score_list.append(cls_output.reshape([b, self.nc, l]))
+                reg_dist_list.append(reg_output.reshape([b, 4, l]))
 
             cls_score_list = Tensor.cat(cls_score_list, axis=-1).permute(0, 2, 1)
             reg_dist_list = Tensor.cat(reg_dist_list, axis=-1).permute(0, 2, 1)
-
-
             anchor_points, stride_tensor = generate_anchors(
                 x, self.stride, self.grid_cell_size, self.grid_cell_offset, device=x[0].device, is_eval=True, mode='af')
-
             pred_bboxes = dist2bbox(reg_dist_list, anchor_points, box_format='xywh')
             pred_bboxes *= stride_tensor
             return Tensor.cat(
