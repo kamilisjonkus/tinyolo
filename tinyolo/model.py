@@ -20,22 +20,16 @@ class QARepVGGBlock:
         return (self.bn(self.rbr_dense_bn(self.rbr_dense(x)) + self.rbr_1x1(x) + x if self.identity else 0)).relu()
 
 def repeat_block(in_chnls, out_chnls, n) -> List[Callable[[Tensor], Tensor]]:
-    blocks = [QARepVGGBlock(in_chnls, out_chnls)]
-    blocks.extend([QARepVGGBlock(out_chnls, out_chnls) for _ in range(n - 1)] if n > 1 else [])
-    return blocks
+    return [QARepVGGBlock(in_chnls, out_chnls)] + [QARepVGGBlock(out_chnls, out_chnls) for _ in range(n - 1)] if n > 1 else []
 
 class EfficientRep():
     def __init__(self, channels_list, num_repeats):
         self.stem = [QARepVGGBlock(3, channels_list[0], stride=2)]
-        self.ERBlock_2 = [QARepVGGBlock(channels_list[0], channels_list[1], 2)]
-        self.ERBlock_2.extend(repeat_block(channels_list[1], channels_list[1], num_repeats[1]))
-        self.ERBlock_3 = [QARepVGGBlock(channels_list[1], channels_list[2], 2)]
-        self.ERBlock_3.extend(repeat_block(channels_list[2], channels_list[2], num_repeats[2]))
-        self.ERBlock_4 = [QARepVGGBlock(channels_list[2], channels_list[3], 2)]
-        self.ERBlock_4.extend(repeat_block(channels_list[3], channels_list[3], num_repeats[3]))
-        self.ERBlock_5 = [QARepVGGBlock(channels_list[3], channels_list[4], 2)]
-        self.ERBlock_5.extend(repeat_block(channels_list[4], channels_list[4], num_repeats[4]))
-        self.ERBlock_5.append(SimCSPSPPF(channels_list[4], channels_list[4], kernel_size=5))
+        self.ERBlock_2 = [QARepVGGBlock(channels_list[0], channels_list[1], 2)] + repeat_block(channels_list[1], channels_list[1], num_repeats[1])
+        self.ERBlock_3 = [QARepVGGBlock(channels_list[1], channels_list[2], 2)] + repeat_block(channels_list[2], channels_list[2], num_repeats[2])
+        self.ERBlock_4 = [QARepVGGBlock(channels_list[2], channels_list[3], 2)] + repeat_block(channels_list[3], channels_list[3], num_repeats[3])
+        self.ERBlock_5 = [QARepVGGBlock(channels_list[3], channels_list[4], 2)] + repeat_block(channels_list[4], channels_list[4], num_repeats[4]) + \
+            + [SimCSPSPPF(channels_list[4], channels_list[4], kernel_size=5)]
 
     def forward(self, x: Tensor) -> Tuple[Tensor]:
         x1 = x.sequential(self.stem)
