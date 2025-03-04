@@ -130,26 +130,7 @@ class EffiDeHead:
     '''Efficient Decoupled Head
     '''
     def __init__(self, num_classes, channels_list):  # detection layer
-        chx = [6, 8, 10]
-        head_layers = [
-          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 1, 1),
-          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 3, 1),
-          ConvBNSiLU(channels_list[chx[0]], channels_list[chx[0]], 3, 1),
-          nn.Conv2d(channels_list[chx[0]], num_classes, 1),
-          nn.Conv2d(channels_list[chx[0]], 4, 1),
-          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 1, 1),
-          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 3, 1),
-          ConvBNSiLU(channels_list[chx[1]], channels_list[chx[1]], 3, 1),
-          nn.Conv2d(channels_list[chx[1]], num_classes, 1),
-          nn.Conv2d(channels_list[chx[1]], 4, 1),
-          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 1, 1),
-          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 3, 1),
-          ConvBNSiLU(channels_list[chx[2]], channels_list[chx[2]], 3, 1),
-          nn.Conv2d(channels_list[chx[2]], num_classes, 1),
-          nn.Conv2d(channels_list[chx[2]], 4, 1)
-        ]
-        self.nc = num_classes  # number of classes
-        self.no = num_classes + 5  # number of outputs per anchor
+        self.num_classes = num_classes
         self.grid = [Tensor.zeros(1)] * 3
         self.prior_prob = 1e-2
         stride = [8, 16, 32]
@@ -158,21 +139,16 @@ class EffiDeHead:
         self.grid_cell_offset = 0.5
         self.grid_cell_size = 5.0
 
-        # Init decouple head
-        self.stems = []
-        self.cls_convs = []
-        self.reg_convs = []
-        self.cls_preds = []
-        self.reg_preds = []
-
         # Efficient decoupled head layers
+        self.stems = self.cls_convs = self.reg_convs = self.cls_preds = self.reg_preds = []
+        chx = [6, 8, 10]
         for i in range(3):
-            idx = i*5
-            self.stems.append(head_layers[idx])
-            self.cls_convs.append(head_layers[idx+1])
-            self.reg_convs.append(head_layers[idx+2])
-            self.cls_preds.append(head_layers[idx+3])
-            self.reg_preds.append(head_layers[idx+4])
+            chnls = channels_list[chx[i]]
+            self.stems.append(ConvBNSiLU(chnls, chnls, 1, 1))
+            self.cls_convs.append(ConvBNSiLU(chnls, chnls, 3, 1))
+            self.reg_convs.append(ConvBNSiLU(chnls, chnls, 3, 1))
+            self.cls_preds.append(nn.Conv2d(chnls, num_classes, 1))
+            self.reg_preds.append(nn.Conv2d(chnls, 4, 1))
 
 
     def __call__(self, x):
@@ -212,7 +188,7 @@ class EffiDeHead:
                 reg_feat = self.reg_convs[i](reg_x)
                 reg_output = self.reg_preds[i](reg_feat)
                 cls_output = Tensor.sigmoid(cls_output)
-                cls_score_list.append(cls_output.reshape([b, self.nc, l]))
+                cls_score_list.append(cls_output.reshape([b, self.num_classes, l]))
                 reg_dist_list.append(reg_output.reshape([b, 4, l]))
 
             cls_score_list = Tensor.cat(cls_score_list, axis=-1).permute(0, 2, 1)
