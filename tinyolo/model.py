@@ -138,58 +138,27 @@ class EffiDeHead:
 
 
     def __call__(self, x):
-        if self.training:
-            cls_score_list = []
-            reg_distri_list = []
+        cls_score_list = []
+        reg_distri_list = []
 
-            for i in range(self.nl):
-                x[i] = self.stems[i](x[i])
-                cls_x = x[i]
-                reg_x = x[i]
-                cls_feat = self.cls_convs[i](cls_x)
-                cls_output = self.cls_preds[i](cls_feat)
-                reg_feat = self.reg_convs[i](reg_x)
-                reg_output = self.reg_preds[i](reg_feat)
+        for i in range(self.nl):
+            x[i] = self.stems[i](x[i])
+            cls_x = x[i]
+            reg_x = x[i]
+            cls_feat = self.cls_convs[i](cls_x)
+            cls_output = self.cls_preds[i](cls_feat)
+            reg_feat = self.reg_convs[i](reg_x)
+            reg_output = self.reg_preds[i](reg_feat)
 
-                cls_output = Tensor.sigmoid(cls_output)
-                cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
-                reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
+            cls_output = Tensor.sigmoid(cls_output)
+            cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
+            reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
 
-            cls_score_list = Tensor.cat(cls_score_list, axis=1)
-            reg_distri_list = Tensor.cat(reg_distri_list, axis=1)
+        cls_score_list = Tensor.cat(cls_score_list, axis=1)
+        reg_distri_list = Tensor.cat(reg_distri_list, axis=1)
 
-            return x, cls_score_list, reg_distri_list
-        else:
-            cls_score_list = []
-            reg_dist_list = []
-
-            for i in range(self.nl):
-                b, _, h, w = x[i].shape
-                l = h * w
-                x[i] = self.stems[i](x[i])
-                cls_x = x[i]
-                reg_x = x[i]
-                cls_feat = self.cls_convs[i](cls_x)
-                cls_output = self.cls_preds[i](cls_feat)
-                reg_feat = self.reg_convs[i](reg_x)
-                reg_output = self.reg_preds[i](reg_feat)
-                cls_output = Tensor.sigmoid(cls_output)
-                cls_score_list.append(cls_output.reshape([b, self.num_classes, l]))
-                reg_dist_list.append(reg_output.reshape([b, 4, l]))
-
-            cls_score_list = Tensor.cat(cls_score_list, axis=-1).permute(0, 2, 1)
-            reg_dist_list = Tensor.cat(reg_dist_list, axis=-1).permute(0, 2, 1)
-            anchor_points, stride_tensor = generate_anchors(
-                x, self.stride, self.grid_cell_size, self.grid_cell_offset, device=x[0].device, is_eval=True, mode='af')
-            pred_bboxes = dist2bbox(reg_dist_list, anchor_points, box_format='xywh')
-            pred_bboxes *= stride_tensor
-            return Tensor.cat(
-                [
-                    pred_bboxes,
-                    Tensor.ones((b, pred_bboxes.shape[1], 1), device=pred_bboxes.device, dtype=pred_bboxes.dtype),
-                    cls_score_list
-                ],
-                axis=-1)
+        return x, cls_score_list, reg_distri_list
+        
 
 class YOLOv6s:
   def __init__(self, w, d, num_classes): #width_multiple, depth_multiple
