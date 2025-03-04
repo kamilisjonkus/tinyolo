@@ -18,24 +18,26 @@ class ConvBNSiLU:
 
   def __call__(self, x: Tensor) -> Tensor:
     return self.bn(self.conv(x)).silu()
+  
+class RepVGGBlock:
+  '''RepVGGBlock is a basic rep-style block, including training and deploy status
+  This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
+  Quantization-Aware version: https://arxiv.org/abs/2212.01593
+  '''
+  def __init__(self, in_channels, out_channels, stride=1, groups=1):
+    self.rbr_identity_bn = nn.BatchNorm2d(in_channels) if out_channels == in_channels and stride == 1 else None
+    self.rbr_3x3 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, groups=groups, bias=False)
+    self.rbr_3x3_bn = nn.BatchNorm2d(out_channels)
+    self.rbr_1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, groups=groups, bias=False)
+    self.rbr_1x1_bn = nn.BatchNorm2d(out_channels)
 
-class QARepVGGBlock:
-    """
-    RepVGGBlock is a basic rep-style block, including training and deploy status
-    This code is based on https://arxiv.org/abs/2212.01593
-    """
-    def __init__(self, in_channels, out_channels, stride=1, groups=1):
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.rbr_dense = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, groups=groups, bias=False)
-        self.rbr_dense_bn = nn.BatchNorm2d(out_channels)
-        self.rbr_1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, groups=1, bias=False)
-        self.identity = True if out_channels == in_channels and stride == 1 else False
-
-    def __call__(self, x: Tensor) -> Tensor:
-        return (self.bn(self.rbr_dense_bn(self.rbr_dense(x)) + self.rbr_1x1(x) + x if self.identity else 0)).relu()
+  def __call__(self, x: Tensor) -> Tensor:
+    if self.rbr_identity_bn is None: identity_out = 0
+    else: identity_out = self.rbr_identity_bn(x)
+    return Tensor.relu(self.rbr_3x3_bn(self.rbr_3x3(x)) + self.rbr_1x1_bn(self.rbr_1x1(x)) + identity_out)
 
 def repeat_block(in_chnls, out_chnls, n) -> List[Callable[[Tensor], Tensor]]:
-    return [QARepVGGBlock(in_chnls, out_chnls)] + [QARepVGGBlock(out_chnls, out_chnls) for _ in range(n - 1)] if n > 1 else []
+    return [RepVGGBlock(in_chnls, out_chnls)] + [RepVGGBlock(out_chnls, out_chnls) for _ in range(n - 1)] if n > 1 else []
   
 class CSPSPPFModule:
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -73,11 +75,11 @@ class BiFusion:
 
 class EfficientRep:
     def __init__(self, channels_list, num_repeats):
-        self.stem = [QARepVGGBlock(3, channels_list[0], stride=2)]
-        self.ERBlock_2 = [QARepVGGBlock(channels_list[0], channels_list[1], 2)] + repeat_block(channels_list[1], channels_list[1], num_repeats[1])
-        self.ERBlock_3 = [QARepVGGBlock(channels_list[1], channels_list[2], 2)] + repeat_block(channels_list[2], channels_list[2], num_repeats[2])
-        self.ERBlock_4 = [QARepVGGBlock(channels_list[2], channels_list[3], 2)] + repeat_block(channels_list[3], channels_list[3], num_repeats[3])
-        self.ERBlock_5 = [QARepVGGBlock(channels_list[3], channels_list[4], 2)] + repeat_block(channels_list[4], channels_list[4], num_repeats[4]) + \
+        self.stem = [RepVGGBlock(3, channels_list[0], stride=2)]
+        self.ERBlock_2 = [RepVGGBlock(channels_list[0], channels_list[1], 2)] + repeat_block(channels_list[1], channels_list[1], num_repeats[1])
+        self.ERBlock_3 = [RepVGGBlock(channels_list[1], channels_list[2], 2)] + repeat_block(channels_list[2], channels_list[2], num_repeats[2])
+        self.ERBlock_4 = [RepVGGBlock(channels_list[2], channels_list[3], 2)] + repeat_block(channels_list[3], channels_list[3], num_repeats[3])
+        self.ERBlock_5 = [RepVGGBlock(channels_list[3], channels_list[4], 2)] + repeat_block(channels_list[4], channels_list[4], num_repeats[4]) + \
             + [CSPSPPFModule(channels_list[4], channels_list[4])]
 
     def __call__(self, x: Tensor) -> Tuple[Tensor]:
