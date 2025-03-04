@@ -130,7 +130,7 @@ class EffiDeHead:
         cls_score_list = []
         reg_distri_list = []
 
-        for i in range(self.nl):
+        for i in range(3):
             x[i] = self.stems[i](x[i])
             cls_x = x[i]
             reg_x = x[i]
