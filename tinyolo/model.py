@@ -82,7 +82,7 @@ class EfficientRep:
     self.ERBlock_5 = [RepVGGBlock(ch_list[3], ch_list[4], 2)] + repeat_block(ch_list[4], ch_list[4], num_repeats[4]) + \
         + [CSPSPPFModule(ch_list[4], ch_list[4])]
 
-  def __call__(self, x: Tensor) -> Tuple[Tensor]:
+  def __call__(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     x1 = x.sequential(self.stem)
     x2 = x1.sequential(self.ERBlock_2)
     x3 = x2.sequential(self.ERBlock_3)
@@ -103,7 +103,7 @@ class RepBiFPANNeck:
     self.downsample1 = ConvBNReLU(ch_list[8], ch_list[9], 3, 2)
     self.Rep_n4 = repeat_block(ch_list[5] + ch_list[9], ch_list[10], num_repeats[8])
 
-  def __call__(self, x: Tuple[Tensor]) -> Tuple[Tensor]:
+  def __call__(self, x: Tuple[Tensor, Tensor, Tensor, Tensor]) -> Tuple[Tensor, Tensor, Tensor]:
     (x3, x2, x1, x0) = x
     fpn_out0 = self.reduce_layer0(x0)
     fpn_out1 = self.reduce_layer1(self.Bifusion0([fpn_out0, x1, x2]).sequential(self.Rep_p4))
@@ -126,7 +126,7 @@ class EffiDeHead:
             self.cls_preds.append(nn.Conv2d(ch, num_classes, 1))
             self.reg_preds.append(nn.Conv2d(ch, 4, 1))
 
-    def __call__(self, x):
+    def __call__(self, x: Tuple[Tensor, Tensor, Tensor]) -> Tuple[Tuple[Tensor, Tensor, Tensor], Tensor, Tensor]:
         cls_score_list = []
         reg_distri_list = []
 
@@ -138,18 +138,13 @@ class EffiDeHead:
             cls_output = self.cls_preds[i](cls_feat)
             reg_feat = self.reg_convs[i](reg_x)
             reg_output = self.reg_preds[i](reg_feat)
-
             cls_output = Tensor.sigmoid(cls_output)
             cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
             reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
 
-        cls_score_list = Tensor.cat(cls_score_list, axis=1)
-        reg_distri_list = Tensor.cat(reg_distri_list, axis=1)
+        return x, Tensor.cat(cls_score_list, axis=1), Tensor.cat(reg_distri_list, axis=1)
 
-        return x, cls_score_list, reg_distri_list
-        
-
-class YOLOv6s:
+class YOLOv6:
   def __init__(self, w, d, num_classes): #width_multiple, depth_multiple
     num_repeat_backbone = [1, 6, 12, 18, 6]
     num_repeat_neck = [12, 12, 12, 12]
