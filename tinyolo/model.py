@@ -113,36 +113,34 @@ class RepBiFPANNeck:
     return (pan_out2, pan_out1, pan_out0)
     
 class EffiDeHead:
-    '''Efficient Decoupled Head
-    '''
-    def __init__(self, num_classes, ch_list):
-        self.stems = self.cls_convs = self.reg_convs = self.cls_preds = self.reg_preds = []
-        chx = [6, 8, 10]
-        for i in range(3):
-            ch = ch_list[chx[i]]
-            self.stems.append(ConvBNSiLU(ch, ch, 1, 1))
-            self.cls_convs.append(ConvBNSiLU(ch, ch, 3, 1))
-            self.reg_convs.append(ConvBNSiLU(ch, ch, 3, 1))
-            self.cls_preds.append(nn.Conv2d(ch, num_classes, 1))
-            self.reg_preds.append(nn.Conv2d(ch, 4, 1))
+  '''Efficient Decoupled Head
+  '''
+  def __init__(self, num_classes, ch_list):
+    self.stems = self.cls_convs = self.reg_convs = self.cls_preds = self.reg_preds = []
+    chx = [6, 8, 10]
+    for i in range(3):
+      ch = ch_list[chx[i]]
+      self.stems.append(ConvBNSiLU(ch, ch, 1, 1))
+      self.cls_convs.append(ConvBNSiLU(ch, ch, 3, 1))
+      self.reg_convs.append(ConvBNSiLU(ch, ch, 3, 1))
+      self.cls_preds.append(nn.Conv2d(ch, num_classes, 1))
+      self.reg_preds.append(nn.Conv2d(ch, 4, 1))
 
-    def __call__(self, x: Tuple[Tensor, Tensor, Tensor]) -> Tuple[Tuple[Tensor, Tensor, Tensor], Tensor, Tensor]:
-        cls_score_list = []
-        reg_distri_list = []
+  def __call__(self, x: Tuple[Tensor, Tensor, Tensor]) -> Tuple[Tuple[Tensor, Tensor, Tensor], Tensor, Tensor]:
+    cls_score_list = reg_distri_list = []
+    for i in range(3):
+      x[i] = self.stems[i](x[i])
+      cls_x = x[i]
+      reg_x = x[i]
+      cls_feat = self.cls_convs[i](cls_x)
+      cls_output = self.cls_preds[i](cls_feat)
+      reg_feat = self.reg_convs[i](reg_x)
+      reg_output = self.reg_preds[i](reg_feat)
+      cls_output = Tensor.sigmoid(cls_output)
+      cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
+      reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
 
-        for i in range(3):
-            x[i] = self.stems[i](x[i])
-            cls_x = x[i]
-            reg_x = x[i]
-            cls_feat = self.cls_convs[i](cls_x)
-            cls_output = self.cls_preds[i](cls_feat)
-            reg_feat = self.reg_convs[i](reg_x)
-            reg_output = self.reg_preds[i](reg_feat)
-            cls_output = Tensor.sigmoid(cls_output)
-            cls_score_list.append(cls_output.flatten(2).permute((0, 2, 1)))
-            reg_distri_list.append(reg_output.flatten(2).permute((0, 2, 1)))
-
-        return x, Tensor.cat(cls_score_list, axis=1), Tensor.cat(reg_distri_list, axis=1)
+    return x, Tensor.cat(cls_score_list, axis=1), Tensor.cat(reg_distri_list, axis=1)
 
 class YOLOv6:
   def __init__(self, w, d, num_classes): #width_multiple, depth_multiple
