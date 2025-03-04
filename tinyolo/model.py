@@ -108,20 +108,16 @@ class RepBiFPANNeck:
     (x3, x2, x1, x0) = x
 
     fpn_out0 = self.reduce_layer0(x0)
-    f_concat_layer0 = self.Bifusion0([fpn_out0, x1, x2])
-    f_out0 = f_concat_layer0.sequential(self.Rep_p4)
+    f_out0 = self.Bifusion0([fpn_out0, x1, x2]).sequential(self.Rep_p4)
 
     fpn_out1 = self.reduce_layer1(f_out0)
-    f_concat_layer1 = self.Bifusion1([fpn_out1, x2, x3])
-    pan_out2 = f_concat_layer1.sequential(self.Rep_p3)
+    pan_out2 = self.Bifusion1([fpn_out1, x2, x3]).sequential(self.Rep_p3)
 
     down_feat1 = self.downsample2(pan_out2)
-    p_concat_layer1 = Tensor.cat([down_feat1, fpn_out1], 1)
-    pan_out1 = p_concat_layer1.sequential(self.Rep_n3)
+    pan_out1 = Tensor.cat([down_feat1, fpn_out1], 1).sequential(self.Rep_n3)
 
     down_feat0 = self.downsample1(pan_out1)
-    p_concat_layer2 = Tensor.cat([down_feat0, fpn_out0], 1)
-    pan_out0 = p_concat_layer2.sequential(self.Rep_n4)
+    pan_out0 = Tensor.cat([down_feat0, fpn_out0], 1).sequential(self.Rep_n4)
 
     return (pan_out2, pan_out1, pan_out0)
     
