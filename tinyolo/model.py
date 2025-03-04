@@ -42,14 +42,14 @@ def repeat_block(in_ch, out_ch, n) -> List[Callable[[Tensor], Tensor]]:
 class CSPSPPFModule:
   # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
   def __init__(self, in_ch, out_ch):
-    c_ = int(out_ch * 0.5)  # hidden ch
-    self.cv1 = ConvBNReLU(in_ch, c_, 1, 1)
-    self.cv2 = ConvBNReLU(in_ch, c_, 1, 1)
-    self.cv3 = ConvBNReLU(c_, c_, 3, 1)
-    self.cv4 = ConvBNReLU(c_, c_, 1, 1)
-    self.cv5 = ConvBNReLU(4 * c_, c_, 1, 1)
-    self.cv6 = ConvBNReLU(c_, c_, 3, 1)
-    self.cv7 = ConvBNReLU(2 * c_, out_ch, 1, 1)
+    inner_ch = int(out_ch * 0.5)
+    self.cv1 = ConvBNReLU(in_ch, inner_ch, 1, 1)
+    self.cv2 = ConvBNReLU(in_ch, inner_ch, 1, 1)
+    self.cv3 = ConvBNReLU(inner_ch, inner_ch, 3, 1)
+    self.cv4 = ConvBNReLU(inner_ch, inner_ch, 1, 1)
+    self.cv5 = ConvBNReLU(4 * inner_ch, inner_ch, 1, 1)
+    self.cv6 = ConvBNReLU(inner_ch, inner_ch, 3, 1)
+    self.cv7 = ConvBNReLU(2 * inner_ch, out_ch, 1, 1)
 
   def __call__(self, x: Tensor) -> Tensor:
     x1 = self.cv4(self.cv3(self.cv1(x)))
