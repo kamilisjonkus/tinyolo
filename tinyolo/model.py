@@ -115,17 +115,7 @@ class RepBiFPANNeck:
 class EffiDeHead:
     '''Efficient Decoupled Head
     '''
-    def __init__(self, num_classes, ch_list):  # detection layer
-        self.num_classes = num_classes
-        self.grid = [Tensor.zeros(1)] * 3
-        self.prior_prob = 1e-2
-        stride = [8, 16, 32]
-        self.stride = Tensor.tensor(stride)
-        self.proj_conv = nn.Conv2d(1, 1, 1, bias=False)
-        self.grid_cell_offset = 0.5
-        self.grid_cell_size = 5.0
-
-        # Efficient decoupled head layers
+    def __init__(self, num_classes, ch_list):
         self.stems = self.cls_convs = self.reg_convs = self.cls_preds = self.reg_preds = []
         chx = [6, 8, 10]
         for i in range(3):
@@ -135,7 +125,6 @@ class EffiDeHead:
             self.reg_convs.append(ConvBNSiLU(ch, ch, 3, 1))
             self.cls_preds.append(nn.Conv2d(ch, num_classes, 1))
             self.reg_preds.append(nn.Conv2d(ch, 4, 1))
-
 
     def __call__(self, x):
         cls_score_list = []
