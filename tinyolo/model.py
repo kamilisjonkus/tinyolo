@@ -3,38 +3,33 @@ from tinygrad import Tensor, nn
 from typing import Tuple, List, Callable
 
 
-class ConvBNReLU:
-  def __init__(self, in_ch, out_ch, kernel_size=3, stride=1, padding=0, groups=1, bias=False):
-    self.conv = nn.Conv2d(in_ch, out_ch, kernel_size, stride, padding, bias=bias, groups=groups)
+class ConvBNAct:
+  def __init__(self, in_ch, out_ch, kernel_size, stride, padding=0, activation=None):
+    self.conv = nn.Conv2d(in_ch, out_ch, kernel_size, stride, padding, bias=False)
     self.bn = nn.BatchNorm2d(out_ch)
+    self.activation = activation
 
   def __call__(self, x: Tensor) -> Tensor:
-    return self.bn(self.conv(x)).relu()
-  
-class ConvBNSiLU:
-  def __init__(self, in_ch, out_ch, kernel_size=3, stride=1, padding=0, groups=1, bias=False):
-    self.conv = nn.Conv2d(in_ch, out_ch, kernel_size, stride, padding, bias=bias, groups=groups)
-    self.bn = nn.BatchNorm2d(out_ch)
-
-  def __call__(self, x: Tensor) -> Tensor:
-    return self.bn(self.conv(x)).silu()
+    x = self.bn(self.conv(x))
+    if self.activation == None: return x
+    elif self.activation == 'relu': return Tensor.relu(x)
+    elif self.activation == 'silu': return Tensor.silu(x)
+    else: raise ValueError(f"Unsupported activation: {self.activation}")
   
 class RepVGGBlock:
   '''RepVGGBlock is a basic rep-style block, including training and deploy status
   This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
   Quantization-Aware version: https://arxiv.org/abs/2212.01593
   '''
-  def __init__(self, in_ch, out_ch, stride=1, groups=1):
+  def __init__(self, in_ch, out_ch, stride=1):
     self.rbr_identity_bn = nn.BatchNorm2d(in_ch) if out_ch == in_ch and stride == 1 else None
-    self.rbr_3x3 = nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, groups=groups, bias=False)
-    self.rbr_3x3_bn = nn.BatchNorm2d(out_ch)
-    self.rbr_1x1 = nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride, padding=0, groups=groups, bias=False)
-    self.rbr_1x1_bn = nn.BatchNorm2d(out_ch)
+    self.rbr_3x3 = ConvBNAct(in_ch, out_ch, 3, stride, 1)
+    self.rbr_1x1 = ConvBNAct(in_ch, out_ch, 1, stride, 0)
 
   def __call__(self, x: Tensor) -> Tensor:
     if self.rbr_identity_bn is None: identity_out = 0
     else: identity_out = self.rbr_identity_bn(x)
-    return Tensor.relu(self.rbr_3x3_bn(self.rbr_3x3(x)) + self.rbr_1x1_bn(self.rbr_1x1(x)) + identity_out)
+    return Tensor.relu(self.rbr_3x3(x) + self.rbr_1x1(x) + identity_out)
 
 def repeat_block(in_ch, out_ch, n) -> List[Callable[[Tensor], Tensor]]:
     return [RepVGGBlock(in_ch, out_ch)] + [RepVGGBlock(out_ch, out_ch) for _ in range(n - 1)] if n > 1 else []
@@ -43,13 +38,13 @@ class CSPSPPFModule:
   # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
   def __init__(self, in_ch, out_ch):
     inner_ch = int(out_ch * 0.5)
-    self.cv1 = ConvBNReLU(in_ch, inner_ch, 1, 1)
-    self.cv2 = ConvBNReLU(in_ch, inner_ch, 1, 1)
-    self.cv3 = ConvBNReLU(inner_ch, inner_ch, 3, 1)
-    self.cv4 = ConvBNReLU(inner_ch, inner_ch, 1, 1)
-    self.cv5 = ConvBNReLU(4 * inner_ch, inner_ch, 1, 1)
-    self.cv6 = ConvBNReLU(inner_ch, inner_ch, 3, 1)
-    self.cv7 = ConvBNReLU(2 * inner_ch, out_ch, 1, 1)
+    self.cv1 = ConvBNAct(in_ch, inner_ch, 1, 1, activation='relu')
+    self.cv2 = ConvBNAct(in_ch, inner_ch, 1, 1, activation='relu')
+    self.cv3 = ConvBNAct(inner_ch, inner_ch, 3, 1, activation='relu')
+    self.cv4 = ConvBNAct(inner_ch, inner_ch, 1, 1, activation='relu')
+    self.cv5 = ConvBNAct(4 * inner_ch, inner_ch, 1, 1, activation='relu')
+    self.cv6 = ConvBNAct(inner_ch, inner_ch, 3, 1, activation='relu')
+    self.cv7 = ConvBNAct(2 * inner_ch, out_ch, 1, 1, activation='relu')
 
   def __call__(self, x: Tensor) -> Tensor:
     x1 = self.cv4(self.cv3(self.cv1(x)))
@@ -61,11 +56,11 @@ class CSPSPPFModule:
 
 class BiFusion:
   def __init__(self, in_ch, out_ch):
-    self.cv1 = ConvBNReLU(in_ch[0], out_ch, 1, 1)
-    self.cv2 = ConvBNReLU(in_ch[1], out_ch, 1, 1)
-    self.cv3 = ConvBNReLU(out_ch * 3, out_ch, 1, 1)
+    self.cv1 = ConvBNAct(in_ch[0], out_ch, 1, 1, activation='relu')
+    self.cv2 = ConvBNAct(in_ch[1], out_ch, 1, 1, activation='relu')
+    self.cv3 = ConvBNAct(out_ch * 3, out_ch, 1, 1, activation='relu')
     self.upsample = nn.ConvTranspose2d(out_ch, out_ch, kernel_size=2, stride=2)
-    self.downsample = ConvBNReLU(out_ch, out_ch, 3, 2)
+    self.downsample = ConvBNAct(out_ch, out_ch, 3, 2, activation='relu')
 
   def __call__(self, x: Tuple[Tensor]) -> Tensor:
     x0 = self.upsample(x[0])
@@ -75,7 +70,7 @@ class BiFusion:
 
 class EfficientRep:
   def __init__(self, ch_list, num_repeats):
-    self.stem = [RepVGGBlock(3, ch_list[0], stride=2)]
+    self.stem = RepVGGBlock(3, ch_list[0], 2)
     self.ERBlock_2 = [RepVGGBlock(ch_list[0], ch_list[1], 2)] + repeat_block(ch_list[1], ch_list[1], num_repeats[1])
     self.ERBlock_3 = [RepVGGBlock(ch_list[1], ch_list[2], 2)] + repeat_block(ch_list[2], ch_list[2], num_repeats[2])
     self.ERBlock_4 = [RepVGGBlock(ch_list[2], ch_list[3], 2)] + repeat_block(ch_list[3], ch_list[3], num_repeats[3])
@@ -83,7 +78,7 @@ class EfficientRep:
         + [CSPSPPFModule(ch_list[4], ch_list[4])]
 
   def __call__(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-    x1 = x.sequential(self.stem)
+    x1 = self.stem(x)
     x2 = x1.sequential(self.ERBlock_2)
     x3 = x2.sequential(self.ERBlock_3)
     x4 = x3.sequential(self.ERBlock_4)
@@ -92,15 +87,15 @@ class EfficientRep:
 
 class RepBiFPANNeck:
   def __init__(self, ch_list, num_repeats):
-    self.reduce_layer0 = ConvBNReLU(ch_list[4], ch_list[5], 1, 1)
+    self.reduce_layer0 = ConvBNAct(ch_list[4], ch_list[5], 1, 1, activation='relu')
     self.Bifusion0 = BiFusion([ch_list[3], ch_list[2]], ch_list[5])
     self.Rep_p4 = repeat_block(ch_list[5], ch_list[5], num_repeats[5])
-    self.reduce_layer1 = ConvBNReLU(ch_list[5], ch_list[6], 1, 1)
+    self.reduce_layer1 = ConvBNAct(ch_list[5], ch_list[6], 1, 1, activation='relu')
     self.Bifusion1 = BiFusion([ch_list[2], ch_list[1]], ch_list[6])
     self.Rep_p3 = repeat_block(ch_list[6], ch_list[6], num_repeats[6])
-    self.downsample2 = ConvBNReLU(ch_list[6], ch_list[7], 3, 2)
+    self.downsample2 = ConvBNAct(ch_list[6], ch_list[7], 3, 2, activation='relu')
     self.Rep_n3 = repeat_block(ch_list[6] + ch_list[7], ch_list[8], num_repeats[7])
-    self.downsample1 = ConvBNReLU(ch_list[8], ch_list[9], 3, 2)
+    self.downsample1 = ConvBNAct(ch_list[8], ch_list[9], 3, 2, activation='relu')
     self.Rep_n4 = repeat_block(ch_list[5] + ch_list[9], ch_list[10], num_repeats[8])
 
   def __call__(self, x: Tuple[Tensor, Tensor, Tensor, Tensor]) -> Tuple[Tensor, Tensor, Tensor]:
@@ -120,9 +115,9 @@ class EffiDeHead:
     chx = [6, 8, 10]
     for i in range(3):
       ch = ch_list[chx[i]]
-      self.stems.append(ConvBNSiLU(ch, ch, 1, 1))
-      self.cls_convs.append(ConvBNSiLU(ch, ch, 3, 1))
-      self.reg_convs.append(ConvBNSiLU(ch, ch, 3, 1))
+      self.stems.append(ConvBNAct(ch, ch, 1, 1), activation='silu')
+      self.cls_convs.append(ConvBNAct(ch, ch, 3, 1), activation='silu')
+      self.reg_convs.append(ConvBNAct(ch, ch, 3, 1), activation='silu')
       self.cls_preds.append(nn.Conv2d(ch, num_classes, 1))
       self.reg_preds.append(nn.Conv2d(ch, 4, 1))
 
