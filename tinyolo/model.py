@@ -104,24 +104,14 @@ class RepBiFPANNeck:
     self.Rep_n4 = repeat_block(ch_list[5] + ch_list[9], ch_list[10], num_repeats[8])
 
   def __call__(self, x: Tuple[Tensor]) -> Tuple[Tensor]:
-
     (x3, x2, x1, x0) = x
-
     fpn_out0 = self.reduce_layer0(x0)
-    f_out0 = self.Bifusion0([fpn_out0, x1, x2]).sequential(self.Rep_p4)
-
-    fpn_out1 = self.reduce_layer1(f_out0)
+    fpn_out1 = self.reduce_layer1(self.Bifusion0([fpn_out0, x1, x2]).sequential(self.Rep_p4))
     pan_out2 = self.Bifusion1([fpn_out1, x2, x3]).sequential(self.Rep_p3)
-
-    down_feat1 = self.downsample2(pan_out2)
-    pan_out1 = Tensor.cat([down_feat1, fpn_out1], 1).sequential(self.Rep_n3)
-
-    down_feat0 = self.downsample1(pan_out1)
-    pan_out0 = Tensor.cat([down_feat0, fpn_out0], 1).sequential(self.Rep_n4)
-
+    pan_out1 = Tensor.cat([self.downsample2(pan_out2), fpn_out1], 1).sequential(self.Rep_n3)
+    pan_out0 = Tensor.cat([self.downsample1(pan_out1), fpn_out0], 1).sequential(self.Rep_n4)
     return (pan_out2, pan_out1, pan_out0)
     
-
 class EffiDeHead:
     '''Efficient Decoupled Head
     '''
